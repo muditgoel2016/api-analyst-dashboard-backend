@@ -1,0 +1,8 @@
+Flask>=2.0
+Werkzeug==3.0.0
+SQLAlchemy
+flask_sqlalchemy
+psycopg2-binary
+Flask-Migrate
+flask-cors
+# Any other direct dependencies
