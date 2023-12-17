@@ -114,18 +114,14 @@ def fetch_logs(start_time, end_time, first_id, limit):
         log_query = log_query.filter(LogEntry.id >= first_id)
     log_query = log_query.order_by(LogEntry.id)
 
-    logs = log_query.limit(limit).all()
-    next_first_id = None
+    # Fetching one extra record
+    logs = log_query.limit(limit + 1).all()
 
-    # Check if there are more logs available for the next page
-    if len(logs) == limit:
-        last_log_in_current_page = logs[-1]
-        next_logs = db.session.query(LogEntry.id).filter(
-            LogEntry.id > last_log_in_current_page.id, 
-            LogEntry.timestamp >= start_time, 
-            LogEntry.timestamp <= end_time
-        ).order_by(LogEntry.id).first()
-        next_first_id = next_logs.id if next_logs else None
+    next_first_id = None
+    # Check if an extra record was fetched
+    if len(logs) > limit:
+        next_first_id = logs[-1].id
+        logs = logs[:-1]  # Exclude the extra record from the returned list
 
     serialized_logs = [{
         'id': entry.id,
@@ -145,7 +141,6 @@ def fetch_aggregate_stats(start_time, end_time):
         func.count(distinct(LogEntry.user_id)).label('unique_users'),
         func.count(LogEntry.id).label('total_calls'),
         func.sum(case((LogEntry.status == 'Failure', 1), else_=0)).label('total_failures'),
-        func.count(LogEntry.id)  # Add this line to count all log entries
     ).filter(LogEntry.timestamp >= start_time, LogEntry.timestamp <= end_time)
 
     stats_result = stats_query.one()
@@ -153,7 +148,7 @@ def fetch_aggregate_stats(start_time, end_time):
         "calls": stats_result.total_calls,
         "failures": stats_result.total_failures,
         "unique_users": stats_result.unique_users,
-        "total_logs": stats_result[3]  # Add the total logs count
+        "total_logs": stats_result.total_calls
     }
 
 def is_valid_time_range(start_time, end_time):
@@ -169,7 +164,7 @@ def hello_world():
         return log_and_create_error("No JSON payload provided.", 'Unknown', "Failure"), 400
     
     user_id = request.json.get('user_id')
-    timestamp = datetime.now()
+    timestamp = datetime.now(timezone.utc)
 
     if not validate_user_id(user_id):
         return log_and_create_error("User ID is required.", 'Unknown', "Failure"), 400
