@@ -37,7 +37,7 @@ def log_and_create_error(message, user_id, status):
     """ Log error and create log entry in database """
     logging.error(f"{message} User ID: {user_id}")
     error_response = jsonify(error="An error occurred", message=message)
-    create_log_entry(user_id, datetime.now(), status, message, serialize_request(request), serialize_response(error_response))
+    create_log_entry(user_id, datetime.now(timezone.utc), status, message, serialize_request(request), serialize_response(error_response))
     return error_response
 
 def create_log_entry(user_id, timestamp, status, error_message, serialized_request, serialized_response):
@@ -55,38 +55,58 @@ def create_log_entry(user_id, timestamp, status, error_message, serialized_reque
 
 def get_time_range():
     """Extract and validate start and end time parameters from request."""
-    start_time = request.args.get('startTime', (datetime.now(timezone.utc) - timedelta(days=7)).isoformat())
-    end_time = request.args.get('endTime', datetime.now(timezone.utc).isoformat())
+    start_time = request.args.get('startTime')
+    end_time = request.args.get('endTime')
 
-    # Default values for start_time and end_time if not provided
-    if not start_time:
-        start_time = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    if not end_time:
-        end_time = datetime.now(timezone.utc).isoformat()
+    if not start_time or not end_time:
+        missing_params = []
+        if not start_time:
+            missing_params.append('startTime')
+        if not end_time:
+            missing_params.append('endTime')
+        return None, f"Missing parameters: {', '.join(missing_params)}"
 
     # Convert to datetime objects, handling 'Z' timezone
     start_time = parse_iso_datetime(start_time)
     end_time = parse_iso_datetime(end_time)
 
-    return start_time, end_time
+    if start_time is None or end_time is None:
+        return None, "Invalid datetime format in startTime or endTime."
+
+    return (start_time, end_time), None
 
 def parse_iso_datetime(iso_str):
-    """Parse ISO format datetime string."""
+    """Parse ISO format datetime string and error out if no timezone info is present."""
     try:
-        # Add timezone information if it's missing
+        # Check if 'Z' is in the string, indicating UTC timezone
         if 'Z' in iso_str:
-            return datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        else:
-            # Assume the datetime is in UTC if no timezone information is present
-            return datetime.fromisoformat(iso_str).replace(tzinfo=timezone.utc)
-    except ValueError:
-        logging.error(f"Invalid ISO datetime format: {iso_str}")
+            # Replace 'Z' with '+00:00' to make it compatible with fromisoformat
+            iso_str = iso_str.replace('Z', '+00:00')
+
+        parsed_datetime = datetime.fromisoformat(iso_str)
+
+        # Error out if no timezone info is present
+        if parsed_datetime.tzinfo is None:
+            raise ValueError("No timezone information present in the ISO datetime string.")
+
+        return parsed_datetime.astimezone(timezone.utc)
+    except ValueError as e:
+        logging.error(f"Invalid ISO datetime format: {iso_str}, Error: {e}")
         return None
 
 def aggregate_activity_data(start_time, end_time, limit):
     """ Aggregate user activity data """
-    results = db.session.query(
-            func.date(LogEntry.timestamp).label('date'),
+    # Get selected timezone name from request parameters
+    selected_tz_name = request.args.get('selectedTzName', 'UTC')  # Default to 'UTC' if not provided
+    logging.info(f"Selected tz name: {selected_tz_name}")
+    logging.info(f"start time: {start_time}")
+    entries = LogEntry.query.all()  # Or some other query
+    for entry in entries:
+        logging.info(f"Selected timestamp: {entry.timestamp}")
+    # Ensure start_time and end_time are in UTC for filtering
+
+    query = db.session.query(
+            func.date(func.timezone(selected_tz_name, func.timezone('UTC', LogEntry.timestamp))).label('date'),
             func.count(LogEntry.user_id).label('total_calls'),
             func.count(distinct(LogEntry.user_id)).label('unique_users'),
             func.sum(case((LogEntry.status == 'Failure', 1), else_=0)).label('total_failures')
@@ -94,8 +114,10 @@ def aggregate_activity_data(start_time, end_time, limit):
             LogEntry.timestamp >= start_time, 
             LogEntry.timestamp <= end_time
         ).group_by(
-            func.date(LogEntry.timestamp)
-        ).limit(limit).all()
+            'date'
+        ).limit(limit)
+
+    results = query.all()
 
     # Convert Row objects to dictionaries
     data = [row._asdict() for row in results]
@@ -164,7 +186,7 @@ def hello_world():
         return log_and_create_error("No JSON payload provided.", 'Unknown', "Failure"), 400
     
     user_id = request.json.get('user_id')
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     if not validate_user_id(user_id):
         return log_and_create_error("User ID is required.", 'Unknown', "Failure"), 400
@@ -187,22 +209,28 @@ def hello_world():
 
 @main.route('/api/activity', methods=['GET'])
 def user_activity():
-    start_time, end_time = get_time_range()
-    first_id = get_pagination_params()
-    if not is_valid_time_range(start_time, end_time):
-        return jsonify(error="Invalid time range", message="startTime must be earlier than endTime"), 400
+    time_range, error = get_time_range()
+    if error:
+        return jsonify(error="Invalid time range", message=error), 400
 
-    data = aggregate_activity_data(start_time, end_time, LIMIT)
+    start_time, end_time = time_range
+    if not is_valid_time_range(start_time, end_time):
+        return jsonify(error="Invalid time range", message="Start time must be earlier than end time."), 400
+
+    data = aggregate_activity_data(start_time, end_time, 10000)
     return jsonify(data), 200
 
 @main.route('/api/combined-analytics', methods=['GET'])
 def combined_analytics():
-    start_time, end_time = get_time_range()
-    first_id = get_pagination_params()
-    if not is_valid_time_range(start_time, end_time):
-        return jsonify(error="Invalid time range", message="startTime must be earlier than endTime"), 400
+    time_range, error = get_time_range()
+    if error:
+        return jsonify(error="Invalid time range", message=error), 400
 
-    logs, next_first_id = fetch_logs(start_time, end_time, first_id, LIMIT)
+    start_time, end_time = time_range
+    if not is_valid_time_range(start_time, end_time):
+        return jsonify(error="Invalid time range", message="Start time must be earlier than end time."), 400
+
+    logs, next_first_id = fetch_logs(start_time, end_time, get_pagination_params(), LIMIT)
     total_stats = fetch_aggregate_stats(start_time, end_time)
 
     combined_response = {"logs": logs, "total": total_stats, "next_first_id": next_first_id}
