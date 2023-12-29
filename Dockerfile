@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your application code
 COPY . .
 
-# Make port available to the world outside this container
+# Make port 5000 available to the world outside this container
 EXPOSE 5000
 
 # Define environment variable
-ENV NAME World
+ENV QUART_ENV=development
 
-# Run run.py when the container launches
-CMD ["python", "./run.py"]
+# Run the Quart app using hypercorn
+CMD ["hypercorn", "app:create_app()", "--bind", "0.0.0.0:5000", "--reload"]

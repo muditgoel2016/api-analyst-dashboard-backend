@@ -6,19 +6,19 @@ Ensure you have Docker installed on your system to run the application in contai
 ### Setting Up the Database
 Most of the database setup is pre-configured. However, in case the database is not initialized or migrations are not applied, follow these steps:
 
-1. **Initialize the Database** (only if not already initialized):
+1. **Initialize Alembic (only if not already initialized):
    ```bash
-   docker-compose exec flask_app flask db init
+   docker-compose exec quart_app alembic init alembic
    ```
 
 2. **Run Migrations** (only if not already done):
    ```bash
-   docker-compose exec flask_app flask db migrate -m "initial migration"
+   docker-compose exec quart_app alembic revision --autogenerate -m "Initial migration"
    ```
 
 3. **Apply Migrations**:
    ```bash
-   docker-compose exec flask_app flask db upgrade
+   docker-compose exec quart_app alembic upgrade head
    ```
 
 ### Running the Application

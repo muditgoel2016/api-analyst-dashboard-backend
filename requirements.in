@@ -1,8 +1,8 @@
-Flask>=2.0
-Werkzeug==3.0.0
-SQLAlchemy
-flask_sqlalchemy
+Quart>=0.16.1
+SQLAlchemy[asyncio]>=1.4
+asyncpg
+Alembic  # Added for database migrations
 psycopg2-binary
-Flask-Migrate
-flask-cors
+quart-cors
+python-dateutil
 # Any other direct dependencies
