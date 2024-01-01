@@ -2,6 +2,7 @@ from quart import Blueprint, jsonify, request
 from datetime import datetime, timezone
 import logging
 import json
+# from .batch_processor import message_queue
 from sqlalchemy import select, func, distinct, case
 from .models import LogEntry
 from .database import async_session
@@ -40,8 +41,27 @@ async def log_and_create_error(session, message, user_id, status):
 
     # Await the create_log_entry coroutine
     await create_log_entry(session, user_id, datetime.now(timezone.utc), status, message, serialized_request, serialized_response)
+    # await queue_log_entry(session, user_id, datetime.now(timezone.utc), status, message, serialized_request, serialized_response)
 
     return error_response
+
+# async def queue_log_entry(session, user_id, timestamp, status, error_message, serialized_request, serialized_response):
+#     """ Queue a log entry for batch processing """
+
+#     # Convert timestamp to offset-naive UTC datetime if it's offset-aware
+#     if timestamp.tzinfo is not None and timestamp.tzinfo.utcoffset(timestamp) is not None:
+#         timestamp = timestamp.replace(tzinfo=None)
+
+#     message_queue = current_app.config['message_queue']
+
+#     await message_queue.put({
+#         "user_id": user_id,
+#         "timestamp": timestamp,
+#         "status": status,
+#         "error_message": error_message,
+#         "request": serialized_request,
+#         "response": serialized_response
+#     })
 
 async def create_log_entry(session, user_id, timestamp, status, error_message, serialized_request, serialized_response):
     """ Create a log entry in the database asynchronously """
@@ -166,26 +186,6 @@ async def fetch_logs(session, start_time, end_time, first_id, limit):
 
     return serialized_logs, next_first_id
 
-# async def fetch_aggregate_stats(session, start_time, end_time):
-#     """Fetch aggregate statistics and total log count asynchronously."""
-#     query = select([
-#         func.count(distinct(LogEntry.user_id)).label('unique_users'),
-#         func.count(LogEntry.id).label('total_calls'),
-#         func.sum(case((LogEntry.status == 'Failure', 1), else_=0)).label('total_failures'),
-#     ]).where(
-#         LogEntry.timestamp >= start_time, 
-#         LogEntry.timestamp <= end_time
-#     )
-
-#     result = await session.execute(query)
-#     stats_result = result.one()
-#     return {
-#         "calls": stats_result.total_calls,
-#         "failures": stats_result.total_failures,
-#         "unique_users": stats_result.unique_users,
-#         "total_logs": stats_result.total_calls
-#     }
-
 async def fetch_aggregate_stats(session, start_time, end_time):
     """Fetch aggregate statistics and total log count asynchronously."""
 
@@ -238,6 +238,7 @@ async def hello_world():
             serialized_request = await serialize_request(request)
             serialized_response = await serialize_response(response_data)
             await create_log_entry(session, user_id, timestamp, "Success", None, serialized_request, serialized_response)
+            # await queue_log_entry(session, user_id, timestamp, "Success", None, serialized_request, serialized_response)
             logging.info(f"Success - Timestamp: {timestamp}, User ID: {user_id}")
             return response_data, 200
     except Exception as e:
@@ -248,6 +249,7 @@ async def hello_world():
             serialized_request = await serialize_request(request)
             serialized_response = await serialize_response(error_response)
             await create_log_entry(session, user_id, timestamp, "Failure", error_message, serialize_request, serialize_response)
+            # await queue_log_entry(session, user_id, timestamp, "Failure", error_message, serialize_request, serialize_response)
             await session.rollback()  # Explicit rollback in case of an exception
         return error_response, 500
 

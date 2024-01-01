@@ -2,6 +2,7 @@ import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 from contextlib import asynccontextmanager
 
 # Access environment variables for database configuration
@@ -44,8 +45,10 @@ async def async_session():
 # Function to test database connection
 async def test_db_connection():
     try:
-        async with async_engine.connect() as conn:
-            await conn.execute('SELECT 1')
+        async with async_session() as session:
+            # Execute a simple query to test the connection
+            await session.execute(text('SELECT 1'))
         logging.info("Successfully connected to the database.")
     except Exception as e:
         logging.error(f"Database connection failed: {e}")
+
